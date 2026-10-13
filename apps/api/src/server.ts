@@ -38,23 +38,6 @@ const DOMAIN = (process.env.MAIL_DOMAIN || 'demo.factormail.test')
   .trim()
   .toLowerCase();
 
-const DOMAIN_OPTIONS = [
-  'mall.com', 'ganm.com', 'erect.com', 'factt.hook', 'stain.etrect',
-  'factormail.test', 'mail.example.com', 'inbox.example.com',
-  'quickinbox.net', 'temporarymail.net', 'fastinbox.org',
-  'maildrop.org', 'inboxhub.net', 'swiftmail.net', 'instantinbox.com',
-  'openinbox.net', 'mailnest.org', 'inboxpoint.com', 'letterbox.net',
-  'rapidmail.org', 'cloudinbox.net', 'mailbridge.org', 'inboxlane.com',
-  'postboxhub.net', 'mailcorner.org', 'inboxpilot.net', 'mailstream.org',
-  'quickletter.net', 'inboxworks.com', 'mailhaven.net', 'mailspace.org',
-  'inboxbase.net', 'mailroute.org', 'letterhub.net', 'inboxcentral.net',
-  'mailport.org', 'inboxworld.net', 'mailplace.net', 'postnest.org',
-  'inboxgarden.net', 'mailpoint.org', 'letterspace.net', 'inboxstation.net',
-  'mailcloud.org', 'postboxlane.net', 'inboxriver.net', 'mailharbor.org',
-  'letterpoint.net', 'inboxfield.net', 'mailcompass.org', 'postboxpark.net',
-  'inboxpath.net', 'mailgrove.org', 'letterstream.net', 'inboxdesk.net'
-];
-
 const ENABLED_DOMAINS = new Set(
   (process.env.MAIL_ENABLED_DOMAINS || DOMAIN)
     .split(',')
@@ -77,6 +60,12 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY?.trim() || '';
 const RESEND_WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET?.trim() || '';
 const resendClient = new Resend(RESEND_API_KEY || undefined);
 const WEB_ORIGIN = process.env.WEB_ORIGIN || '';
+const DEVELOPER_ORIGIN = process.env.DEVELOPER_ORIGIN || '';
+const ALLOWED_ORIGINS = new Set(
+  [WEB_ORIGIN, DEVELOPER_ORIGIN, ...(process.env.ALLOWED_ORIGINS || '').split(',')]
+    .map(value => value.trim().replace(/\/$/, ''))
+    .filter(Boolean)
+);
 const DATABASE_URL = process.env.DATABASE_URL?.trim() || '';
 const pool = DATABASE_URL
   ? new Pool({
@@ -208,18 +197,26 @@ async function initializeStorage(): Promise<void> {
 }
 
 function send(res: any, status: number, data: unknown) {
-  res.writeHead(status, {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
-    'Access-Control-Allow-Origin': WEB_ORIGIN || '*',
     'Vary': 'Origin',
     'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-Inbound-Secret, X-Mailbox-Token, Authorization'
-  });
+  };
+  const allowedOrigin = (res as any).__allowedOrigin as string | undefined;
+  if (allowedOrigin) {
+    headers['Access-Control-Allow-Origin'] = allowedOrigin;
+  } else if (
+    process.env.NODE_ENV !== 'production' &&
+    !(res as any).__corsRejected
+  ) {
+    headers['Access-Control-Allow-Origin'] = '*';
+  }
+  res.writeHead(status, headers);
   res.end(JSON.stringify(data));
 }
-
 async function readJson(req: any): Promise<any> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -307,18 +304,32 @@ function rateLimited(ip: string): boolean {
 
 const server = createServer(async (req, res) => {
   const origin = req.headers.origin;
+  const normalizedOrigin = typeof origin === 'string'
+    ? origin.trim().replace(/\/$/, '')
+    : '';
 
-  if (WEB_ORIGIN && origin && origin !== WEB_ORIGIN) {
+  if (normalizedOrigin && !ALLOWED_ORIGINS.has(normalizedOrigin)) {
+    (res as any).__allowedOrigin = undefined;
+    (res as any).__corsRejected = true;
     return send(res, 403, { error: 'Origin not allowed.' });
   }
 
+  if (normalizedOrigin) {
+    (res as any).__allowedOrigin = normalizedOrigin;
+  }
+
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, {
-      'Access-Control-Allow-Origin': WEB_ORIGIN || '*',
+    const headers: Record<string, string> = {
       'Vary': 'Origin',
       'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, X-Inbound-Secret, X-Mailbox-Token, Authorization'
-    });
+    };
+    if (normalizedOrigin) {
+      headers['Access-Control-Allow-Origin'] = normalizedOrigin;
+    } else if (process.env.NODE_ENV !== 'production') {
+      headers['Access-Control-Allow-Origin'] = '*';
+    }
+    res.writeHead(204, headers);
     return res.end();
   }
 
@@ -473,7 +484,7 @@ const server = createServer(async (req, res) => {
 
     if (req.method === 'GET' && path === '/api/domains') {
       return send(res, 200, {
-        domains: [...new Set([...DOMAIN_OPTIONS, ...ENABLED_DOMAINS])]
+        domains: [...ENABLED_DOMAINS]
           .sort()
           .map(domain => ({
             domain,
