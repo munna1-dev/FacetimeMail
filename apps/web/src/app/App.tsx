@@ -801,7 +801,13 @@ export default function App() {
     }
   }
 
-  if (window.location.pathname === '/admin' || window.location.pathname.startsWith('/admin/')) {
+  const isDeveloperHost = window.location.hostname === 'mail.northstarbank.site';
+
+  if (
+    isDeveloperHost ||
+    window.location.pathname === '/admin' ||
+    window.location.pathname.startsWith('/admin/')
+  ) {
     return <AdminPortal />;
   }
 
