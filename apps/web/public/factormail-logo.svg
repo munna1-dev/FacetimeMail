@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="420" height="100" viewBox="0 0 420 100"
+     fill="none" role="img"
+     aria-labelledby="logo-title logo-description">
+  <title id="logo-title">FactorMailService</title>
+  <desc id="logo-description">
+    A modern envelope symbol with a cyan lightning accent,
+    beside the FactorMailService wordmark.
+  </desc>
+
+  <defs>
+    <linearGradient id="icon-gradient"
+                    x1="12" y1="12" x2="82" y2="82"
+                    gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1677F9"/>
+      <stop offset="1" stop-color="#06C6D9"/>
+    </linearGradient>
+    <linearGradient id="envelope-gradient"
+                    x1="23" y1="31" x2="73" y2="70"
+                    gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DDF8FF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Brand icon -->
+  <rect x="5" y="5" width="90" height="90" rx="25"
+        fill="#102A43"/>
+  <rect x="5.75" y="5.75" width="88.5" height="88.5" rx="24.25"
+        stroke="#FFFFFF" stroke-opacity=".10" stroke-width="1.5"/>
+
+  <!-- Envelope -->
+  <rect x="20" y="27" width="60" height="46" rx="10"
+        fill="url(#icon-gradient)"/>
+  <path d="M23 33L46.5 50.5C48.6 52.1 51.4 52.1 53.5 50.5L77 33"
+        stroke="url(#envelope-gradient)" stroke-width="5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Fast delivery accent -->
+  <path d="M53 43L44 56H51L47 66L61 50H53L58 43H53Z"
+        fill="#FFFFFF"/>
+
+  <!-- Wordmark -->
+  <text x="110" y="47"
+        font-family="Inter, Arial, Helvetica, sans-serif"
+        font-size="29" font-weight="800"
+        letter-spacing="-1.1" fill="#102A43">Factor<tspan
+        fill="#1677F9">Mail</tspan></text>
+
+  <text x="112" y="69"
+        font-family="Inter, Arial, Helvetica, sans-serif"
+        font-size="13" font-weight="600"
+        letter-spacing="3.1" fill="#647B91">SERVICE</text>
+
+  <rect x="112" y="79" width="46" height="3" rx="1.5"
+        fill="#06C6D9"/>
+</svg>

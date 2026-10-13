@@ -1,0 +1,15 @@
+{
+  "name": "facetimemail-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm --workspace=api run dev",
+    "dev:web": "npm --workspace=web run dev",
+    "build:api": "npm --workspace=api run build",
+    "build:web": "npm --workspace=web run build"
+  }
+}

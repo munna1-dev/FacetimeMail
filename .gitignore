@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+apps/api/.env
+apps/api/.env.*
+!apps/api/.env.example
+apps/web/.env.local
+
+# Backups and local test artifacts
+.backup/
+.restart-test/
+**/*.bak
+**/*.backup*
+*.backup*
+
+# Build output and test coverage
+dist/
+**/dist/
+build/
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Deployment configuration containing local state
+.vercel/
+.railway/
+
+# Local mailbox data
+apps/api/data/store.json
+
+# Historical source backups
+apps/api/src/server.ts.before-persistence
+apps/web/index.html.before-favicon
+*.before-*
+
+# Accidental empty shell artifacts
+/api@1.0.0
+/facetimemail-monorepo@1.0.0
+/npm
+/tsc
+/web@1.0.0
