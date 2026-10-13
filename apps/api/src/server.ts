@@ -1,16 +1,18 @@
 import dotenv from 'dotenv';
 import { Resend } from 'resend';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
 
+if (!process.env.VERCEL) {
 dotenv.config({
   path: resolve(dirname(fileURLToPath(import.meta.url)), '../.env'),
   override: true,
 });
+}
 
 type Message = {
   id: string;
@@ -302,7 +304,7 @@ function rateLimited(ip: string): boolean {
   return current.count > 60;
 }
 
-const server = createServer(async (req, res) => {
+const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
   const origin = req.headers.origin;
   const normalizedOrigin = typeof origin === 'string'
     ? origin.trim().replace(/\/$/, '')
@@ -776,8 +778,26 @@ const server = createServer(async (req, res) => {
       error: status >= 500 ? 'Internal server error.' : String((error as Error).message)
     });
   }
-});
+};
 
+const server = createServer(requestHandler);
+
+export async function handleRequest(
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<void> {
+  try {
+    await ensureInitialized();
+    await requestHandler(req, res);
+  } catch (error) {
+    console.error('API initialization or request failed.');
+    if (!res.headersSent) {
+      send(res, 503, { error: 'Service temporarily unavailable.' });
+    }
+  }
+}
+
+if (!process.env.VERCEL) {
 const cleanupTimer = setInterval(() => {
   for (const [hash, expiry] of adminSessions) {
     if (expiry <= Date.now()) adminSessions.delete(hash);
@@ -791,10 +811,20 @@ const cleanupTimer = setInterval(() => {
 }, 60_000);
 
 cleanupTimer.unref();
+}
+
+let initializationPromise: Promise<void> | null = null;
+
+function ensureInitialized(): Promise<void> {
+  if (!initializationPromise) {
+    initializationPromise = initializeStorage();
+  }
+  return initializationPromise;
+}
 
 async function startServer(): Promise<void> {
   try {
-    await initializeStorage();
+    await ensureInitialized();
 
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`FactorMailService API listening on port ${PORT}`);
@@ -811,4 +841,4 @@ async function startServer(): Promise<void> {
   }
 }
 
-void startServer();
+if (!process.env.VERCEL) void startServer();

@@ -4,7 +4,7 @@ import {
   LogOut, Mail, RefreshCw, Search, Server, ShieldCheck, Trash2
 } from 'lucide-react';
 
-const API = (import.meta.env.VITE_API_URL || 'http://localhost:4000').replace(/\/$/, '');
+const API = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 const TOKEN_KEY = 'factormail.admin.token';
 
 type Overview = {
