@@ -83,7 +83,9 @@ if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(DOMAIN)) {
   throw new Error('MAIL_DOMAIN must be a valid domain name.');
 }
 
-mkdirSync(dirname(DATA_FILE), { recursive: true });
+if (!pool) {
+  mkdirSync(dirname(DATA_FILE), { recursive: true });
+}
 
 function loadStore(): Store {
   try {
@@ -96,7 +98,7 @@ function loadStore(): Store {
   return { mailboxes: {} };
 }
 
-let store = loadStore();
+let store: Store = pool ? { mailboxes: {} } : loadStore();
 let saveQueue: Promise<void> = Promise.resolve();
 
 function isValidStore(value: unknown): value is Store {
@@ -530,7 +532,7 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
       return send(res, 404, { error: 'Admin route not found.' });
     }
 
-    if (req.method === 'GET' && path === '/health') {
+    if (req.method === 'GET' && (path === '/health' || path === '/api/health')) {
       return send(res, 200, {
         status: 'healthy',
         service: 'factormailservice-api',
