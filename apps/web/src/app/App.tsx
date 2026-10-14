@@ -801,12 +801,20 @@ export default function App() {
     }
   }
 
+  const hostname = window.location.hostname.toLowerCase();
+  const pathname = window.location.pathname;
+
+  // The mail host is the administrator/developer console.
+  // Keep /admin available as a compatibility route.
   if (
-    window.location.pathname === '/admin' ||
-    window.location.pathname.startsWith('/admin/')
+    hostname === 'mail.northstarbank.site' ||
+    pathname === '/admin' ||
+    pathname.startsWith('/admin/')
   ) {
     return <AdminPortal />;
   }
+
+  // The inbox host continues through the customer mailbox flow.
 
   if (!authReady) {
     return (
