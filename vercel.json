@@ -4,7 +4,15 @@
   "outputDirectory": "apps/web/dist",
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/api/:path*",
+      "destination": "/api/[...path]"
+    },
+    {
+      "source": "/health",
+      "destination": "/api/[...path]"
+    },
+    {
+      "source": "/:path((?!api).*)",
       "destination": "/index.html"
     }
   ]

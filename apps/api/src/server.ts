@@ -148,6 +148,18 @@ async function initializeStorage(): Promise<void> {
     )
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS factormail_admin_sessions (
+      token_hash text PRIMARY KEY,
+      expires_at timestamptz NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+
+  await pool.query(
+    'DELETE FROM factormail_admin_sessions WHERE expires_at <= now()'
+  );
+
   const existing = await pool.query(
     'SELECT payload FROM factormail_store_snapshot WHERE id = 1'
   );
@@ -382,11 +394,23 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
 
         const token = randomBytes(32).toString('base64url');
         const tokenHash = createHash('sha256').update(token).digest('hex');
-        adminSessions.set(tokenHash, Date.now() + 8 * 60 * 60 * 1000);
+        const expiresAtMs = Date.now() + 8 * 60 * 60 * 1000;
+
+        if (pool) {
+          await pool.query(
+            `INSERT INTO factormail_admin_sessions (token_hash, expires_at)
+             VALUES ($1, $2)
+             ON CONFLICT (token_hash)
+             DO UPDATE SET expires_at = EXCLUDED.expires_at`,
+            [tokenHash, new Date(expiresAtMs)]
+          );
+        } else {
+          adminSessions.set(tokenHash, expiresAtMs);
+        }
 
         return send(res, 200, {
           token,
-          expiresAt: new Date(adminSessions.get(tokenHash)!).toISOString()
+          expiresAt: new Date(expiresAtMs).toISOString()
         });
       }
 
@@ -394,15 +418,46 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
       const bearer = authorization.startsWith('Bearer ')
         ? authorization.slice(7)
         : '';
-      const tokenHash = createHash('sha256').update(bearer).digest('hex');
-      const sessionExpiry = adminSessions.get(tokenHash);
 
-      if (!bearer || !sessionExpiry || sessionExpiry <= Date.now()) {
-        if (sessionExpiry) adminSessions.delete(tokenHash);
+      if (!bearer) {
+        return send(res, 401, { error: 'Administrator sign-in required.' });
+      }
+
+      const tokenHash = createHash('sha256').update(bearer).digest('hex');
+      let sessionExpiry: number | undefined;
+
+      if (pool) {
+        const result = await pool.query(
+          `SELECT expires_at
+           FROM factormail_admin_sessions
+           WHERE token_hash = $1 AND expires_at > now()`,
+          [tokenHash]
+        );
+
+        if (result.rows.length > 0) {
+          sessionExpiry = new Date(result.rows[0].expires_at).getTime();
+        } else {
+          await pool.query(
+            'DELETE FROM factormail_admin_sessions WHERE token_hash = $1 AND expires_at <= now()',
+            [tokenHash]
+          );
+        }
+      } else {
+        sessionExpiry = adminSessions.get(tokenHash);
+      }
+
+      if (!sessionExpiry || !Number.isFinite(sessionExpiry) || sessionExpiry <= Date.now()) {
+        adminSessions.delete(tokenHash);
         return send(res, 401, { error: 'Administrator sign-in required.' });
       }
 
       if (req.method === 'POST' && path === '/api/admin/logout') {
+        if (pool) {
+          await pool.query(
+            'DELETE FROM factormail_admin_sessions WHERE token_hash = $1',
+            [tokenHash]
+          );
+        }
         adminSessions.delete(tokenHash);
         return send(res, 200, { success: true });
       }

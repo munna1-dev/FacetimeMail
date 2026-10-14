@@ -51,3 +51,5 @@ apps/web/index.html.before-favicon
 /npm
 /tsc
 /web@1.0.0
+.vercel
+.env*
