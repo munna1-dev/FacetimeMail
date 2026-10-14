@@ -218,7 +218,7 @@ function send(res: any, status: number, data: unknown) {
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
     'Vary': 'Origin',
-    'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
+    'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-Inbound-Secret, X-Mailbox-Token, Authorization'
   };
   const allowedOrigin = (res as any).__allowedOrigin as string | undefined;
@@ -453,6 +453,240 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
         return send(res, 401, { error: 'Administrator sign-in required.' });
       }
 
+      if (req.method === 'GET' && path === '/api/admin/domains') {
+        if (!pool) {
+          return send(res, 503, {
+            error: 'Domain registry requires database storage.'
+          });
+        }
+
+        const result = await pool.query(
+          `SELECT id, domain_name, is_active, verification_status,
+                  inbound_status, provider_reference, created_at,
+                  updated_at, administrative_notes, inbound_tested_at
+           FROM public.domains
+           ORDER BY created_at DESC`
+        );
+
+        return send(res, 200, {
+          domains: result.rows.map(row => ({
+            id: row.id,
+            domain: row.domain_name,
+            isActive: row.is_active,
+            verificationStatus: row.verification_status,
+            inboundStatus: row.inbound_status,
+            providerReference: row.provider_reference,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            administrativeNotes: row.administrative_notes,
+            inboundTestedAt: row.inbound_tested_at
+          }))
+        });
+      }
+
+      if (req.method === 'POST' && path === '/api/admin/domains') {
+        if (!pool) {
+          return send(res, 503, { error: 'Domain registry requires database storage.' });
+        }
+
+        const body = await readJson(req);
+        const domain = typeof body.domain === 'string'
+          ? body.domain.trim().toLowerCase()
+          : '';
+
+        if (
+          domain.length > 253 ||
+          !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i.test(domain)
+        ) {
+          return send(res, 400, { error: 'Enter a valid domain name, such as mail.example.com.' });
+        }
+
+        const notes = typeof body.administrativeNotes === 'string'
+          ? body.administrativeNotes.trim().slice(0, 2000)
+          : null;
+
+        try {
+          const result = await pool.query(
+            `INSERT INTO public.domains
+               (domain_name, is_active, verification_status, inbound_status,
+                administrative_notes)
+             VALUES ($1, false, 'pending', 'pending', $2)
+             RETURNING id, domain_name, is_active, verification_status,
+                       inbound_status, provider_reference, created_at,
+                       updated_at, administrative_notes, inbound_tested_at`,
+            [domain, notes]
+          );
+          const row = result.rows[0];
+
+          return send(res, 201, {
+            domain: {
+              id: row.id,
+              domain: row.domain_name,
+              isActive: row.is_active,
+              verificationStatus: row.verification_status,
+              inboundStatus: row.inbound_status,
+              providerReference: row.provider_reference,
+              createdAt: row.created_at,
+              updatedAt: row.updated_at,
+              administrativeNotes: row.administrative_notes,
+              inboundTestedAt: row.inbound_tested_at
+            }
+          });
+        } catch (error: any) {
+          if (error?.code === '23505') {
+            return send(res, 409, { error: 'That domain is already registered.' });
+          }
+          if (error?.code === '23514' || error?.code === 'P0001') {
+            return send(res, 400, { error: 'The domain registry limit has been reached.' });
+          }
+          throw error;
+        }
+      }
+
+      const adminDomainMatch = path.match(
+        /^\/api\/admin\/domains\/([0-9a-f-]{36})$/i
+      );
+
+      if (req.method === 'PATCH' && adminDomainMatch) {
+        if (!pool) {
+          return send(res, 503, { error: 'Domain registry requires database storage.' });
+        }
+
+        const body = await readJson(req);
+        const validVerification = ['pending', 'verified', 'failed'];
+        const validInbound = ['pending', 'ready', 'failed'];
+
+        if (
+          typeof body.isActive !== 'boolean' ||
+          !validVerification.includes(body.verificationStatus) ||
+          !validInbound.includes(body.inboundStatus)
+        ) {
+          return send(res, 400, {
+            error: 'Provide a valid active flag, verification status, and inbound status.'
+          });
+        }
+
+        if (
+          body.isActive &&
+          (body.verificationStatus !== 'verified' || body.inboundStatus !== 'ready')
+        ) {
+          return send(res, 400, {
+            error: 'A domain must be verified and inbound-ready before activation.'
+          });
+        }
+
+        const providerReference = typeof body.providerReference === 'string'
+          ? body.providerReference.trim().slice(0, 500) || null
+          : null;
+        const notes = typeof body.administrativeNotes === 'string'
+          ? body.administrativeNotes.trim().slice(0, 2000) || null
+          : null;
+
+        const result = await pool.query(
+          `UPDATE public.domains
+           SET is_active = $2,
+               verification_status = $3,
+               inbound_status = $4,
+               provider_reference = $5,
+               administrative_notes = $6,
+               inbound_tested_at = CASE
+                 WHEN $4 = 'ready' THEN COALESCE(inbound_tested_at, now())
+                 ELSE NULL
+               END,
+               updated_at = now()
+           WHERE id = $1::uuid
+           RETURNING id, domain_name, is_active, verification_status,
+                     inbound_status, provider_reference, created_at,
+                     updated_at, administrative_notes, inbound_tested_at`,
+          [
+            adminDomainMatch[1],
+            body.isActive,
+            body.verificationStatus,
+            body.inboundStatus,
+            providerReference,
+            notes
+          ]
+        );
+
+        if (!result.rows.length) {
+          return send(res, 404, { error: 'Domain not found.' });
+        }
+
+        const row = result.rows[0];
+        return send(res, 200, {
+          domain: {
+            id: row.id,
+            domain: row.domain_name,
+            isActive: row.is_active,
+            verificationStatus: row.verification_status,
+            inboundStatus: row.inbound_status,
+            providerReference: row.provider_reference,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            administrativeNotes: row.administrative_notes,
+            inboundTestedAt: row.inbound_tested_at
+          }
+        });
+      }
+
+      if (req.method === 'DELETE' && adminDomainMatch) {
+        if (!pool) {
+          return send(res, 503, { error: 'Domain registry requires database storage.' });
+        }
+
+        const id = adminDomainMatch[1];
+
+        const domainResult = await pool.query(
+          'SELECT domain_name FROM public.domains WHERE id = $1::uuid LIMIT 1',
+          [id]
+        );
+
+        if (!domainResult.rows.length) {
+          return send(res, 404, { error: 'Domain not found.' });
+        }
+
+        const domainName = String(domainResult.rows[0].domain_name).toLowerCase();
+
+        // The live legacy schema stores mailbox addresses as text.
+        // Preserve existing mailboxes by blocking deletion while any use this domain.
+        const references = await pool.query(
+          `SELECT 1
+           FROM public.mailboxes
+           WHERE right(lower(address), length($1) + 1) = '@' || lower($1)
+           LIMIT 1`,
+          [domainName]
+        );
+
+        if (references.rows.length > 0) {
+          return send(res, 409, {
+            error: 'This domain is used by existing mailboxes. Deactivate it instead of deleting it.'
+          });
+        }
+
+        try {
+          const result = await pool.query(
+            'DELETE FROM public.domains WHERE id = $1::uuid RETURNING domain_name',
+            [id]
+          );
+
+          if (!result.rows.length) {
+            return send(res, 404, { error: 'Domain not found.' });
+          }
+
+          return send(res, 200, {
+            success: true,
+            domain: result.rows[0].domain_name
+          });
+        } catch (error: any) {
+          if (error?.code === '23503') {
+            return send(res, 409, {
+              error: 'This domain is referenced by other records and cannot be deleted.'
+            });
+          }
+          throw error;
+        }
+      }
+
       if (req.method === 'POST' && path === '/api/admin/logout') {
         if (pool) {
           await pool.query(
@@ -542,14 +776,31 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
     }
 
     if (req.method === 'GET' && path === '/api/domains') {
-      return send(res, 200, {
-        domains: [...ENABLED_DOMAINS]
-          .sort()
-          .map(domain => ({
-            domain,
-            enabled: ENABLED_DOMAINS.has(domain),
-            status: ENABLED_DOMAINS.has(domain) ? 'enabled' : 'pending'
+      if (pool) {
+        const result = await pool.query(
+          `SELECT domain_name
+           FROM public.domains
+           WHERE is_active = true
+             AND verification_status = 'verified'
+             AND inbound_status = 'ready'
+           ORDER BY domain_name ASC`
+        );
+
+        return send(res, 200, {
+          domains: result.rows.map(row => ({
+            domain: row.domain_name,
+            enabled: true,
+            status: 'enabled'
           }))
+        });
+      }
+
+      return send(res, 200, {
+        domains: [...ENABLED_DOMAINS].sort().map(domain => ({
+          domain,
+          enabled: ENABLED_DOMAINS.has(domain),
+          status: ENABLED_DOMAINS.has(domain) ? 'enabled' : 'pending'
+        }))
       });
     }
 
@@ -569,7 +820,23 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
         : '';
       const local = requestedUsername || randomBytes(10).toString('hex');
 
-      if (!ENABLED_DOMAINS.has(selectedDomain)) {
+      let domainEligible = ENABLED_DOMAINS.has(selectedDomain);
+
+      if (pool) {
+        const eligibility = await pool.query(
+          `SELECT 1
+           FROM public.domains
+           WHERE domain_name = $1
+             AND is_active = true
+             AND verification_status = 'verified'
+             AND inbound_status = 'ready'
+           LIMIT 1`,
+          [selectedDomain]
+        );
+        domainEligible = eligibility.rows.length > 0;
+      }
+
+      if (!domainEligible) {
         return send(res, 400, {
           error: 'That domain is not enabled for email reception yet.'
         });

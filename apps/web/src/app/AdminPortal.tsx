@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   Activity, AlertTriangle, Boxes, CheckCircle2, Clock3, LayoutDashboard,
-  LogOut, Mail, RefreshCw, Search, Server, ShieldCheck, Trash2
+  Globe, LogOut, Mail, Plus, RefreshCw, Save, Search, Server, ShieldCheck, Trash2
 } from 'lucide-react';
 
 const API = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
@@ -26,6 +26,25 @@ type Mailbox = {
   expiresAt: string;
   messageCount: number;
 };
+type Domain = {
+  id: string;
+  domain: string;
+  isActive: boolean;
+  verificationStatus: 'pending' | 'verified' | 'failed';
+  inboundStatus: 'pending' | 'ready' | 'failed';
+  providerReference: string | null;
+  createdAt: string;
+  updatedAt: string;
+  administrativeNotes: string | null;
+  inboundTestedAt: string | null;
+};
+type DomainDraft = {
+  verificationStatus: 'pending' | 'verified' | 'failed';
+  inboundStatus: 'pending' | 'ready' | 'failed';
+  isActive: boolean;
+  providerReference: string;
+  administrativeNotes: string;
+};
 type Status = {
   api: string;
   storage: string;
@@ -35,7 +54,7 @@ type Status = {
   adminSessionExpiresAt: string;
   timestamp: string;
 };
-type Page = 'overview' | 'mailboxes' | 'services';
+type Page = 'overview' | 'mailboxes' | 'domains' | 'services';
 
 async function api<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API}${path}`, {
@@ -68,6 +87,17 @@ export default function AdminPortal() {
   const [status, setStatus] = useState<Status | null>(null);
   const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
   const [search, setSearch] = useState('');
+  const [domains, setDomains] = useState<Domain[]>([]);
+  const [newDomain, setNewDomain] = useState('');
+  const [newDomainNotes, setNewDomainNotes] = useState('');
+  const [selectedDomainId, setSelectedDomainId] = useState('');
+  const [domainDraft, setDomainDraft] = useState<DomainDraft>({
+    verificationStatus: 'pending',
+    inboundStatus: 'pending',
+    isActive: false,
+    providerReference: '',
+    administrativeNotes: ''
+  });
 
   const logout = useCallback(async () => {
     const current = token;
@@ -99,6 +129,10 @@ export default function AdminPortal() {
       if (page === 'mailboxes') {
         const result = await api<{ mailboxes: Mailbox[] }>('/api/admin/mailboxes', token);
         setMailboxes(result.mailboxes);
+      }
+      if (page === 'domains') {
+        const result = await api<{ domains: Domain[] }>('/api/admin/domains', token);
+        setDomains(result.domains);
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Unable to load administrator data.';
@@ -169,6 +203,120 @@ export default function AdminPortal() {
     }
   }
 
+  async function addDomain(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError('');
+    setNotice('');
+    setBusy(true);
+
+    try {
+      const result = await api<{ domain: Domain }>('/api/admin/domains', token, {
+        method: 'POST',
+        body: JSON.stringify({
+          domain: newDomain.trim().toLowerCase(),
+          administrativeNotes: newDomainNotes
+        })
+      });
+
+      setDomains(items => [result.domain, ...items]);
+      setNewDomain('');
+      setNewDomainNotes('');
+      setSelectedDomainId(result.domain.id);
+      setDomainDraft({
+        verificationStatus: result.domain.verificationStatus,
+        inboundStatus: result.domain.inboundStatus,
+        isActive: result.domain.isActive,
+        providerReference: result.domain.providerReference || '',
+        administrativeNotes: result.domain.administrativeNotes || ''
+      });
+      setNotice(`Domain ${result.domain.domain} was registered in pending status.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to register domain.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function selectDomain(domain: Domain) {
+    setSelectedDomainId(domain.id);
+    setDomainDraft({
+      verificationStatus: domain.verificationStatus,
+      inboundStatus: domain.inboundStatus,
+      isActive: domain.isActive,
+      providerReference: domain.providerReference || '',
+      administrativeNotes: domain.administrativeNotes || ''
+    });
+    setError('');
+    setNotice('');
+  }
+
+  async function saveDomain(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const selected = domains.find(item => item.id === selectedDomainId);
+    if (!selected) {
+      setError('Select a domain before saving changes.');
+      return;
+    }
+
+    if (
+      domainDraft.isActive &&
+      (domainDraft.verificationStatus !== 'verified' || domainDraft.inboundStatus !== 'ready')
+    ) {
+      setError('A domain must be verified and inbound-ready before activation.');
+      return;
+    }
+
+    setError('');
+    setNotice('');
+    setBusy(true);
+
+    try {
+      const result = await api<{ domain: Domain }>(
+        `/api/admin/domains/${selected.id}`,
+        token,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(domainDraft)
+        }
+      );
+
+      setDomains(items => items.map(item =>
+        item.id === result.domain.id ? result.domain : item
+      ));
+      setNotice(`Domain ${result.domain.domain} was updated.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to update domain.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteDomain(domain: Domain) {
+    if (!window.confirm(
+      `Permanently delete ${domain.domain}? Domains with dependent addresses cannot be deleted.`
+    )) return;
+
+    setError('');
+    setNotice('');
+    setBusy(true);
+
+    try {
+      await api(
+        `/api/admin/domains/${domain.id}`,
+        token,
+        { method: 'DELETE' }
+      );
+
+      setDomains(items => items.filter(item => item.id !== domain.id));
+      if (selectedDomainId === domain.id) setSelectedDomainId('');
+      setNotice(`Domain ${domain.domain} was deleted.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to delete domain.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const filteredMailboxes = useMemo(() => {
     const query = search.trim().toLowerCase();
     return mailboxes.filter(item =>
@@ -206,6 +354,7 @@ export default function AdminPortal() {
   const nav: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'mailboxes', label: 'Mailbox management', icon: Mail },
+    { id: 'domains', label: 'Domain registry', icon: Globe },
     { id: 'services', label: 'API & services', icon: Server }
   ];
 
@@ -223,7 +372,7 @@ export default function AdminPortal() {
 
         <div className="admin-kicker">Operations & developer console</div>
         <h1 className="admin-title">
-          {page === 'overview' ? 'Service overview' : page === 'mailboxes' ? 'Mailbox management' : 'API & services'}
+          {page === 'overview' ? 'Service overview' : page === 'mailboxes' ? 'Mailbox management' : page === 'domains' ? 'Domain registry' : 'API & services'}
         </h1>
         <p className="admin-subtitle">Monitor live service configuration and manage temporary inboxes.</p>
 
@@ -331,6 +480,217 @@ export default function AdminPortal() {
                   </table>
                 </div>
               </div>
+            )}
+
+            {page === 'domains' && (
+              <>
+                <div className="admin-panel">
+                  <div className="admin-panel-heading">
+                    <div>
+                      <h2>Register a domain</h2>
+                      <p>New domains start inactive and require verification and inbound readiness.</p>
+                    </div>
+                    <Globe size={20} />
+                  </div>
+
+                  <form onSubmit={addDomain}>
+                    <label className="admin-form-label" htmlFor="new-domain">Domain name</label>
+                    <input
+                      id="new-domain"
+                      className="admin-form-input"
+                      type="text"
+                      autoComplete="off"
+                      placeholder="mail.example.com"
+                      value={newDomain}
+                      onChange={event => setNewDomain(event.target.value)}
+                      maxLength={253}
+                      required
+                    />
+                    <label className="admin-form-label" htmlFor="new-domain-notes">Administrative notes (optional)</label>
+                    <textarea
+                      id="new-domain-notes"
+                      className="admin-form-input"
+                      rows={3}
+                      maxLength={2000}
+                      placeholder="Provider, ownership checks, or setup notes"
+                      value={newDomainNotes}
+                      onChange={event => setNewDomainNotes(event.target.value)}
+                    />
+                    <div style={{ marginTop: 14 }}>
+                      <button className="admin-button admin-button-primary" type="submit" disabled={busy}>
+                        <Plus size={14} /> Register domain
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
+                <div className="admin-panel">
+                  <div className="admin-panel-heading">
+                    <div>
+                      <h2>Registered domains</h2>
+                      <p>{domains.length} registered · Public availability requires active, verified, inbound-ready status.</p>
+                    </div>
+                    <button className="admin-button" onClick={() => void loadData()} disabled={busy}>
+                      <RefreshCw size={14} /> Refresh
+                    </button>
+                  </div>
+
+                  <div className="admin-table-wrap">
+                    <table className="admin-table">
+                      <thead>
+                        <tr>
+                          <th>Domain</th>
+                          <th>Verification</th>
+                          <th>Inbound</th>
+                          <th>Activation</th>
+                          <th>Created</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {domains.map(domain => (
+                          <tr key={domain.id}>
+                            <td>
+                              <div className="admin-address">{domain.domain}</div>
+                              <small>{domain.id}</small>
+                            </td>
+                            <td>
+                              <span className={`admin-pill ${domain.verificationStatus === 'verified' ? 'ok' : 'warn'}`}>
+                                {domain.verificationStatus}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={`admin-pill ${domain.inboundStatus === 'ready' ? 'ok' : 'warn'}`}>
+                                {domain.inboundStatus}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={`admin-pill ${domain.isActive ? 'ok' : 'warn'}`}>
+                                {domain.isActive ? 'Active' : 'Inactive'}
+                              </span>
+                            </td>
+                            <td>{dateLabel(domain.createdAt)}</td>
+                            <td>
+                              <button className="admin-button" onClick={() => selectDomain(domain)}>
+                                Manage
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                        {!domains.length && (
+                          <tr>
+                            <td colSpan={6}>{busy ? 'Loading domains…' : 'No domains registered yet.'}</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {selectedDomainId && domains.some(item => item.id === selectedDomainId) && (
+                  <div className="admin-panel">
+                    <div className="admin-panel-heading">
+                      <div>
+                        <h2>Manage domain</h2>
+                        <p>{domains.find(item => item.id === selectedDomainId)?.domain}</p>
+                      </div>
+                      <ShieldCheck size={20} />
+                    </div>
+
+                    <form onSubmit={saveDomain}>
+                      <label className="admin-form-label" htmlFor="domain-verification">Verification status</label>
+                      <select
+                        id="domain-verification"
+                        className="admin-form-input"
+                        value={domainDraft.verificationStatus}
+                        onChange={event => setDomainDraft(draft => ({
+                          ...draft,
+                          verificationStatus: event.target.value as DomainDraft['verificationStatus']
+                        }))}
+                      >
+                        <option value="pending">Pending</option>
+                        <option value="verified">Verified</option>
+                        <option value="failed">Failed</option>
+                      </select>
+
+                      <label className="admin-form-label" htmlFor="domain-inbound">Inbound email status</label>
+                      <select
+                        id="domain-inbound"
+                        className="admin-form-input"
+                        value={domainDraft.inboundStatus}
+                        onChange={event => setDomainDraft(draft => ({
+                          ...draft,
+                          inboundStatus: event.target.value as DomainDraft['inboundStatus']
+                        }))}
+                      >
+                        <option value="pending">Pending</option>
+                        <option value="ready">Ready</option>
+                        <option value="failed">Failed</option>
+                      </select>
+
+                      <label className="admin-form-label" htmlFor="domain-provider">Provider reference (optional)</label>
+                      <input
+                        id="domain-provider"
+                        className="admin-form-input"
+                        value={domainDraft.providerReference}
+                        maxLength={500}
+                        onChange={event => setDomainDraft(draft => ({
+                          ...draft, providerReference: event.target.value
+                        }))}
+                        placeholder="Email provider domain ID or reference"
+                      />
+
+                      <label className="admin-form-label" htmlFor="domain-admin-notes">Administrative notes</label>
+                      <textarea
+                        id="domain-admin-notes"
+                        className="admin-form-input"
+                        rows={4}
+                        maxLength={2000}
+                        value={domainDraft.administrativeNotes}
+                        onChange={event => setDomainDraft(draft => ({
+                          ...draft, administrativeNotes: event.target.value
+                        }))}
+                        placeholder="Ownership, DNS checks, provider setup, and operational notes"
+                      />
+
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 18, fontSize: 13 }}>
+                        <input
+                          type="checkbox"
+                          checked={domainDraft.isActive}
+                          onChange={event => setDomainDraft(draft => ({
+                            ...draft, isActive: event.target.checked
+                          }))}
+                        />
+                        Activate this domain for public mailbox creation
+                      </label>
+                      <p className="admin-footer">
+                        Activation is rejected unless verification is verified and inbound email is ready.
+                        Mark inbound ready only after testing the real provider configuration.
+                      </p>
+
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 14 }}>
+                        <button className="admin-button admin-button-primary" type="submit" disabled={busy}>
+                          <Save size={14} /> Save changes
+                        </button>
+                        <button className="admin-button" type="button" onClick={() => setSelectedDomainId('')}>
+                          Cancel
+                        </button>
+                        <button
+                          className="admin-button admin-button-danger"
+                          type="button"
+                          disabled={busy}
+                          onClick={() => {
+                            const selected = domains.find(item => item.id === selectedDomainId);
+                            if (selected) void deleteDomain(selected);
+                          }}
+                        >
+                          <Trash2 size={14} /> Delete domain
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+              </>
             )}
 
             {page === 'services' && (
