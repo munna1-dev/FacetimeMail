@@ -41,7 +41,7 @@ export default function AuthScreen({ onContinueAsGuest }: AuthScreenProps) {
           email: email.trim(),
           password,
           options: {
-            emailRedirectTo: window.location.origin
+            emailRedirectTo: 'https://mail.northstarbank.site'
           }
         });
         if (authError) throw authError;
@@ -52,7 +52,7 @@ export default function AuthScreen({ onContinueAsGuest }: AuthScreenProps) {
       } else {
         const { error: authError } = await supabase.auth.resetPasswordForEmail(
           email.trim(),
-          { redirectTo: window.location.origin }
+          { redirectTo: 'https://mail.northstarbank.site' }
         );
         if (authError) throw authError;
         setNotice('If an account exists for this email, a password reset link will be sent.');
