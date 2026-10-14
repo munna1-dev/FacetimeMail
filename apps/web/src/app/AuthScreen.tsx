@@ -71,7 +71,7 @@ export default function AuthScreen({ onContinueAsGuest }: AuthScreenProps) {
       : 'Reset your password';
 
   const subtitle = mode === 'signin'
-    ? 'Sign in to continue to FactorMailService.'
+    ? 'Sign in to continue to FacetimeMail.'
     : mode === 'signup'
       ? 'Create an account to get started.'
       : 'Enter your email and we will send reset instructions if an account exists.';
@@ -79,8 +79,8 @@ export default function AuthScreen({ onContinueAsGuest }: AuthScreenProps) {
   return (
     <main className="auth-page">
       <section className="auth-showcase">
-        <a className="auth-logo" href="/" aria-label="FactorMailService home">
-          <img src="/factormail-logo.svg" alt="FactorMailService" />
+        <a className="auth-logo" href="/" aria-label="FacetimeMail home">
+          <img src="/factormail-logo.svg" alt="FacetimeMail" />
         </a>
 
         <div className="auth-showcase-content">
@@ -95,7 +95,7 @@ export default function AuthScreen({ onContinueAsGuest }: AuthScreenProps) {
           </div>
         </div>
 
-        <p className="auth-showcase-foot">FactorMailService · Temporary email, made simple.</p>
+        <p className="auth-showcase-foot">FacetimeMail · Temporary email, made simple.</p>
       </section>
 
       <section className="auth-form-side">
@@ -166,7 +166,7 @@ export default function AuthScreen({ onContinueAsGuest }: AuthScreenProps) {
 
           {mode === 'signin' ? (
             <p className="auth-switch">
-              New to FactorMailService?{' '}
+              New to FacetimeMail?{' '}
               <button type="button" className="auth-text-button" onClick={() => changeMode('signup')}>
                 Create an account
               </button>

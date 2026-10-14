@@ -91,6 +91,17 @@ export default function AdminPortal() {
   const [newDomain, setNewDomain] = useState('');
   const [newDomainNotes, setNewDomainNotes] = useState('');
   const [selectedDomainId, setSelectedDomainId] = useState('');
+  const [domainSetup, setDomainSetup] = useState<{
+    domain: string;
+    verified: boolean;
+    message: string;
+    verificationRecords: Array<{
+      type: string;
+      domain: string;
+      value: string;
+      reason: string;
+    }>;
+  } | null>(null);
   const [domainDraft, setDomainDraft] = useState<DomainDraft>({
     verificationStatus: 'pending',
     inboundStatus: 'pending',
@@ -250,6 +261,57 @@ export default function AdminPortal() {
     setNotice('');
   }
 
+  async function configureSelectedDomain() {
+    const selected = domains.find(item => item.id === selectedDomainId);
+    if (!selected) {
+      setError('Select a domain before configuring Vercel.');
+      return;
+    }
+
+    setError('');
+    setNotice('');
+    setDomainSetup(null);
+    setBusy(true);
+
+    try {
+      const result = await api<{
+        success: boolean;
+        verified: boolean;
+        message: string;
+        verificationRecords: Array<{
+          type: string;
+          domain: string;
+          value: string;
+          reason: string;
+        }>;
+        domain: Domain;
+      }>(
+        `/api/admin/domains/${selected.id}/configure-vercel`,
+        token,
+        { method: 'POST', body: JSON.stringify({}) }
+      );
+
+      setDomains(items => items.map(item =>
+        item.id === result.domain.id ? result.domain : item
+      ));
+      setDomainDraft(draft => ({
+        ...draft,
+        verificationStatus: result.domain.verificationStatus
+      }));
+      setDomainSetup({
+        domain: result.domain.domain,
+        verified: result.verified,
+        message: result.message,
+        verificationRecords: result.verificationRecords
+      });
+      setNotice(result.message);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to configure this domain with Vercel.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveDomain(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const selected = domains.find(item => item.id === selectedDomainId);
@@ -328,10 +390,10 @@ export default function AdminPortal() {
     return (
       <main className="admin-login-wrap">
         <section className="admin-login-card">
-          <img src="/factormail-logo.svg" alt="FactorMailService" />
+          <img src="/factormail-logo.svg" alt="FacetimeMail" />
           <div className="admin-kicker">Protected administration</div>
           <h1 className="admin-title">Admin portal</h1>
-          <p className="admin-subtitle">Sign in to manage FactorMailService operations and inspect live service health.</p>
+          <p className="admin-subtitle">Sign in to manage FacetimeMail operations and inspect live service health.</p>
           {error && <div className="admin-message error" role="alert">{error}</div>}
           <form onSubmit={login}>
             <label className="admin-form-label" htmlFor="admin-username">Administrator username</label>
@@ -363,7 +425,7 @@ export default function AdminPortal() {
       <div className="admin-shell">
         <header className="admin-topbar">
           <div className="admin-brand">
-            <img src="/factormail-logo.svg" alt="FactorMailService" />
+            <img src="/factormail-logo.svg" alt="FacetimeMail" />
           </div>
           <button className="admin-button" onClick={() => void logout()}>
             <LogOut size={15} /> Sign out
@@ -446,7 +508,7 @@ export default function AdminPortal() {
                   <div className="admin-status-list">
                     <div className="admin-status-item"><span>Mailbox domain</span><strong>{overview?.domain || 'Loading…'}</strong></div>
                     <div className="admin-status-item"><span>Inbound delivery</span><span className={`admin-pill ${overview?.inboundConfigured ? 'ok' : 'warn'}`}>{overview?.inboundConfigured ? 'Secret configured' : 'Setup required'}</span></div>
-                    <div className="admin-status-item"><span>Storage backend</span><strong>Local JSON file</strong></div>
+                    <div className="admin-status-item"><span>Storage backend</span><strong>{overview?.storage === 'postgres' ? 'PostgreSQL' : overview?.storage === 'file' ? 'Local JSON file' : 'Checking…'}</strong></div>
                     <div className="admin-status-item"><span>Latest health check</span><strong>{overview ? dateLabel(overview.timestamp) : '—'}</strong></div>
                   </div>
                   {!overview?.inboundConfigured && <div className="admin-message" style={{ marginTop: 16, marginBottom: 0 }}><AlertTriangle size={15} style={{ verticalAlign: 'middle', marginRight: 7 }} />Real inbound email is not configured. Configure a real domain and provider webhook before relying on message delivery.</div>}
@@ -597,6 +659,43 @@ export default function AdminPortal() {
                       <ShieldCheck size={20} />
                     </div>
 
+                    {domainSetup && domainSetup.domain === domains.find(item => item.id === selectedDomainId)?.domain && (
+                      <div className="admin-footer" style={{ marginBottom: 16, overflowWrap: 'anywhere' }}>
+                        <strong>Vercel setup: {domainSetup.verified ? 'Verified' : 'Verification required'}</strong>
+                        <p>{domainSetup.message}</p>
+                        {domainSetup.verificationRecords.length > 0 ? (
+                          <div>
+                            <strong>Verification records returned by Vercel</strong>
+                            {domainSetup.verificationRecords.map((record, index) => (
+                              <div key={`${record.type}-${record.domain}-${index}`} style={{ marginTop: 10 }}>
+                                <div>Type: {record.type || 'Not specified'}</div>
+                                <div>Name: {record.domain || 'Not specified'}</div>
+                                <div>Value: {record.value || 'Not supplied by Vercel'}</div>
+                                {record.reason && <div>Reason: {record.reason}</div>}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p>Vercel did not return any additional verification records in this response. Check the domain configuration in Vercel for current DNS requirements.</p>
+                        )}
+                      </div>
+                    )}
+
+                    <div style={{ marginBottom: 16 }}>
+                      <button
+                        className="admin-button admin-button-primary"
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void configureSelectedDomain()}
+                      >
+                        <Globe size={14} /> {busy ? 'Configuring…' : 'Configure with Vercel'}
+                      </button>
+                      <p className="admin-footer">
+                        Attaches this domain to the configured Vercel project and checks Vercel's verification response.
+                        It does not change DNS records or configure inbound email.
+                      </p>
+                    </div>
+
                     <form onSubmit={saveDomain}>
                       <label className="admin-form-label" htmlFor="domain-verification">Verification status</label>
                       <select
@@ -708,7 +807,7 @@ export default function AdminPortal() {
                 <p className="admin-footer">Domain, TTL, and webhook settings are read from server configuration. This screen does not silently change production environment variables.</p>
               </div>
             )}
-            <div className="admin-footer">FactorMailService · Administrative access · Data refreshes on demand.</div>
+            <div className="admin-footer">FacetimeMail · Administrative access · Data refreshes on demand.</div>
           </section>
         </div>
       </div>

@@ -322,11 +322,11 @@ function Dashboard() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand brand-svg" href="#home" aria-label="FactorMailService home" onClick={(event) => { event.preventDefault(); setActivePage('home'); setMobileMenu(false); }}>
+        <a className="brand brand-svg" href="#home" aria-label="FacetimeMail home" onClick={(event) => { event.preventDefault(); setActivePage('home'); setMobileMenu(false); }}>
           <img
             className="brand-logo-image"
             src="/factormail-logo.svg"
-            alt="FactorMailService"
+            alt="FacetimeMail"
             width="210"
             height="50"
           />
@@ -737,7 +737,7 @@ function Dashboard() {
           <span className="brand-name">Factor<span>Mail</span></span>
         </a>
         <p>Temporary email, made simple.</p>
-        <span className="footer-copy">© {new Date().getFullYear()} FactorMailService</span>
+        <span className="footer-copy">© {new Date().getFullYear()} FacetimeMail</span>
       </footer>
     </div>
   );
@@ -811,7 +811,7 @@ export default function App() {
   if (!authReady) {
     return (
       <div className="auth-loading">
-        <img src="/factormail-logo.svg" alt="FactorMailService" />
+        <img src="/factormail-logo.svg" alt="FacetimeMail" />
         <span>Checking your session…</span>
       </div>
     );

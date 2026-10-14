@@ -547,6 +547,140 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
         /^\/api\/admin\/domains\/([0-9a-f-]{36})$/i
       );
 
+
+      // Attach a registered domain to the configured Vercel project.
+      // Vercel credentials remain on the server; DNS and inbound email
+      // must be verified separately before activation.
+      const configureVercelMatch = path.match(
+        /^\/api\/admin\/domains\/([0-9a-f-]{36})\/configure-vercel$/i
+      );
+
+      if (req.method === 'POST' && configureVercelMatch) {
+        if (!pool) {
+          return send(res, 503, { error: 'Domain configuration requires database storage.' });
+        }
+
+        const vercelToken = process.env.VERCEL_API_TOKEN?.trim() || '';
+        const vercelProjectId = process.env.VERCEL_PROJECT_ID?.trim() || '';
+        const vercelTeamId = process.env.VERCEL_TEAM_ID?.trim() || '';
+
+        if (!vercelToken || !vercelProjectId) {
+          return send(res, 503, {
+            error: 'Vercel integration is not configured. Set VERCEL_API_TOKEN and VERCEL_PROJECT_ID on the API server.'
+          });
+        }
+
+        const domainResult = await pool.query(
+          'SELECT id, domain_name FROM public.domains WHERE id = $1::uuid LIMIT 1',
+          [configureVercelMatch[1]]
+        );
+
+        if (!domainResult.rows.length) {
+          return send(res, 404, { error: 'Domain not found.' });
+        }
+
+        const domainName = String(domainResult.rows[0].domain_name).toLowerCase();
+        const teamQuery = vercelTeamId
+          ? '?teamId=' + encodeURIComponent(vercelTeamId)
+          : '';
+        const projectPath = encodeURIComponent(vercelProjectId);
+
+        const addUrl =
+          'https://api.vercel.com/v10/projects/' +
+          projectPath + '/domains' + teamQuery;
+
+        const addResponse = await fetch(addUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer ' + vercelToken,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ name: domainName })
+        });
+
+        let vercelData: any = await addResponse.json().catch(() => ({}));
+        let effectiveResponse = addResponse;
+
+        // A domain may already be attached. In that case, read its
+        // existing project-domain record instead of treating it as fatal.
+        if (!addResponse.ok && [400, 409].includes(addResponse.status)) {
+          const lookupUrl =
+            'https://api.vercel.com/v9/projects/' +
+            projectPath + '/domains/' +
+            encodeURIComponent(domainName) + teamQuery;
+
+          const lookupResponse = await fetch(lookupUrl, {
+            headers: { Authorization: 'Bearer ' + vercelToken }
+          });
+          const lookupData: any = await lookupResponse.json().catch(() => ({}));
+
+          if (lookupResponse.ok) {
+            effectiveResponse = lookupResponse;
+            vercelData = lookupData;
+          }
+        }
+
+        if (!effectiveResponse.ok) {
+          const detail =
+            typeof vercelData?.error?.message === 'string'
+              ? vercelData.error.message
+              : 'Vercel rejected the domain configuration request.';
+
+          console.error('Vercel domain configuration failed:', {
+            status: effectiveResponse.status,
+            domain: domainName
+          });
+
+          return send(res, 502, {
+            error: detail.slice(0, 500)
+          });
+        }
+
+        const verified = vercelData?.verified === true;
+        const verificationRecords = Array.isArray(vercelData?.verification)
+          ? vercelData.verification.map((record: any) => ({
+              type: typeof record?.type === 'string' ? record.type : '',
+              domain: typeof record?.domain === 'string' ? record.domain : '',
+              value: typeof record?.value === 'string' ? record.value : '',
+              reason: typeof record?.reason === 'string' ? record.reason : ''
+            }))
+          : [];
+
+        const updated = await pool.query(
+          `UPDATE public.domains
+           SET verification_status = $2,
+               updated_at = now()
+           WHERE id = $1::uuid
+           RETURNING id, domain_name, is_active, verification_status,
+                     inbound_status, provider_reference, created_at,
+                     updated_at, administrative_notes, inbound_tested_at`,
+          [configureVercelMatch[1], verified ? 'verified' : 'pending']
+        );
+
+        const row = updated.rows[0];
+
+        return send(res, 200, {
+          success: true,
+          verified,
+          verificationRecords,
+          message: verified
+            ? 'Domain is attached to the Vercel project and Vercel reports it as verified.'
+            : 'Domain is attached to the Vercel project. Complete the required ownership or DNS verification.',
+          domain: {
+            id: row.id,
+            domain: row.domain_name,
+            isActive: row.is_active,
+            verificationStatus: row.verification_status,
+            inboundStatus: row.inbound_status,
+            providerReference: row.provider_reference,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            administrativeNotes: row.administrative_notes,
+            inboundTestedAt: row.inbound_tested_at
+          }
+        });
+      }
+
       if (req.method === 'PATCH' && adminDomainMatch) {
         if (!pool) {
           return send(res, 503, { error: 'Domain registry requires database storage.' });
@@ -704,7 +838,7 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
           storage: STORAGE_BACKEND,
           domain: DOMAIN,
           mailboxTtlMinutes: TTL_MINUTES,
-          inboundConfigured: Boolean(WEBHOOK_SECRET),
+          inboundConfigured: Boolean(RESEND_API_KEY && RESEND_WEBHOOK_SECRET),
           adminSessionExpiresAt: new Date(sessionExpiry).toISOString(),
           timestamp: new Date().toISOString()
         });
@@ -723,7 +857,7 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
           mailboxCapacity: 5000,
           domain: DOMAIN,
           mailboxTtlMinutes: TTL_MINUTES,
-          inboundConfigured: Boolean(WEBHOOK_SECRET),
+          inboundConfigured: Boolean(RESEND_API_KEY && RESEND_WEBHOOK_SECRET),
           storage: STORAGE_BACKEND,
           api: 'healthy',
           timestamp: new Date().toISOString()
@@ -769,7 +903,7 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
     if (req.method === 'GET' && (path === '/health' || path === '/api/health')) {
       return send(res, 200, {
         status: 'healthy',
-        service: 'factormailservice-api',
+        service: 'facetimemail-api',
         storage: STORAGE_BACKEND,
         timestamp: new Date().toISOString()
       });
@@ -1151,14 +1285,14 @@ async function startServer(): Promise<void> {
     await ensureInitialized();
 
     server.listen(PORT, '0.0.0.0', () => {
-      console.log(`FactorMailService API listening on port ${PORT}`);
+      console.log(`FacetimeMail API listening on port ${PORT}`);
       console.log(`Mailbox domain: ${DOMAIN}`);
       console.log(`Storage backend: ${STORAGE_BACKEND}`);
       if (!pool) console.log(`Persistent data file: ${DATA_FILE}`);
       console.log(`Inbound webhook: ${WEBHOOK_SECRET ? 'configured' : 'disabled'}`);
     });
   } catch (error) {
-    console.error('FactorMailService storage initialization failed.');
+    console.error('FacetimeMail storage initialization failed.');
     console.error(error instanceof Error ? error.message : 'Unknown startup error');
     await pool?.end().catch(() => undefined);
     process.exitCode = 1;
