@@ -204,6 +204,14 @@ async function initializeStorage(): Promise<void> {
     }
   }
 
+  // Register the verified production inbox domain without deleting existing records.
+  const productionInboxDomain = 'inbox.northstarbank.site';
+  if (ENABLED_DOMAINS.has(productionInboxDomain)) {
+    await pool.query(
+      'INSERT INTO public.domains (domain_name, is_active, verification_status, inbound_status) VALUES ($1, true, $2, $3) ON CONFLICT (domain_name) DO UPDATE SET is_active = true, verification_status = EXCLUDED.verification_status, inbound_status = EXCLUDED.inbound_status, updated_at = now()',
+      [productionInboxDomain, 'verified', 'ready']
+    );
+  }
   // Apply the existing mailbox expiry policy after loading persistent data.
   if (cleanExpired()) {
     await persist();
