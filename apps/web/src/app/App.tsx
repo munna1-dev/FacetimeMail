@@ -751,6 +751,7 @@ import { useEffect as useAuthEffect, useState as useAuthState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import AuthScreen from './AuthScreen';
 import AdminPortal from './AdminPortal';
+import DeveloperPortal from './DeveloperPortal';
 import { supabase } from '../lib/supabase';
 
 export default function App() {
@@ -804,15 +805,18 @@ export default function App() {
   const hostname = window.location.hostname.toLowerCase();
   const pathname = window.location.pathname;
 
-  // The mail host is the administrator/developer console.
-  // Keep /admin available as a compatibility route.
+  // Dedicated administrator portal; retain legacy /admin routes.
   if (
     hostname === 'mail.northstarbank.site' ||
-    hostname === 'dev.northstarbank.site' ||
     pathname === '/admin' ||
     pathname.startsWith('/admin/')
   ) {
     return <AdminPortal />;
+  }
+
+  // Developer portal uses separate server-verified credentials.
+  if (hostname === 'dev.northstarbank.site') {
+    return <DeveloperPortal />;
   }
 
   // The inbox host continues through the customer mailbox flow.

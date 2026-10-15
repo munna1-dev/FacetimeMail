@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { ArrowRight, CheckCircle2, Eye, EyeOff, LockKeyhole, Mail } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Eye, EyeOff, Facebook, LockKeyhole, Mail } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 type AuthScreenProps = {
@@ -16,6 +16,34 @@ export default function AuthScreen({ onContinueAsGuest }: AuthScreenProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [facebookBusy, setFacebookBusy] = useState(false);
+
+  const facebookAuthEnabled =
+    import.meta.env.VITE_FACEBOOK_AUTH_ENABLED === 'true';
+
+  async function signInWithFacebook() {
+    setError('');
+    setNotice('');
+    setFacebookBusy(true);
+
+    try {
+      const { error: authError } = await supabase.auth.signInWithOAuth({
+        provider: 'facebook',
+        options: {
+          redirectTo: window.location.origin
+        }
+      });
+
+      if (authError) throw authError;
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : 'Facebook sign-in could not be started. Please try again.'
+      );
+      setFacebookBusy(false);
+    }
+  }
 
   function changeMode(next: Mode) {
     setMode(next);
@@ -41,7 +69,7 @@ export default function AuthScreen({ onContinueAsGuest }: AuthScreenProps) {
           email: email.trim(),
           password,
           options: {
-            emailRedirectTo: 'https://mail.northstarbank.site'
+            emailRedirectTo: 'https://inbox.northstarbank.site'
           }
         });
         if (authError) throw authError;
@@ -52,7 +80,7 @@ export default function AuthScreen({ onContinueAsGuest }: AuthScreenProps) {
       } else {
         const { error: authError } = await supabase.auth.resetPasswordForEmail(
           email.trim(),
-          { redirectTo: 'https://mail.northstarbank.site' }
+          { redirectTo: 'https://inbox.northstarbank.site' }
         );
         if (authError) throw authError;
         setNotice('If an account exists for this email, a password reset link will be sent.');
@@ -163,6 +191,18 @@ export default function AuthScreen({ onContinueAsGuest }: AuthScreenProps) {
           )}
 
           <div className="auth-divider"><span>OR</span></div>
+
+          {mode === 'signin' && facebookAuthEnabled && (
+            <button
+              type="button"
+              className="auth-facebook"
+              onClick={signInWithFacebook}
+              disabled={busy || facebookBusy}
+            >
+              <Facebook size={18} aria-hidden="true" />
+              {facebookBusy ? 'Connecting to Facebook…' : 'Continue with Facebook'}
+            </button>
+          )}
 
           {mode === 'signin' ? (
             <p className="auth-switch">

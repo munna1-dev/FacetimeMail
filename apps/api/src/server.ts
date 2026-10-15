@@ -1,8 +1,9 @@
+import { SUPABASE_CA } from './supabase-ca.js';
 import dotenv from 'dotenv';
 import { Resend } from 'resend';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Pool } from 'pg';
@@ -10,7 +11,7 @@ import { Pool } from 'pg';
 if (!process.env.VERCEL) {
 dotenv.config({
   path: resolve(dirname(fileURLToPath(import.meta.url)), '../.env'),
-  override: true,
+  override: false,
 });
 }
 
@@ -60,7 +61,7 @@ const DATA_FILE = resolve(
 const WEBHOOK_SECRET = process.env.INBOUND_EMAIL_WEBHOOK_SECRET || '';
 const RESEND_API_KEY = process.env.RESEND_API_KEY?.trim() || '';
 const RESEND_WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET?.trim() || '';
-const resendClient = new Resend(RESEND_API_KEY || undefined);
+const resendClient = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 const WEB_ORIGIN = process.env.WEB_ORIGIN || '';
 const DEVELOPER_ORIGIN = process.env.DEVELOPER_ORIGIN || '';
 const ALLOWED_ORIGINS = new Set(
@@ -72,6 +73,10 @@ const DATABASE_URL = process.env.DATABASE_URL?.trim() || '';
 const pool = DATABASE_URL
   ? new Pool({
       connectionString: DATABASE_URL,
+      ssl: {
+        ca: SUPABASE_CA,
+        rejectUnauthorized: true,
+      },
       max: 5,
       connectionTimeoutMillis: 10000,
       idleTimeoutMillis: 30000,
@@ -160,6 +165,18 @@ async function initializeStorage(): Promise<void> {
 
   await pool.query(
     'DELETE FROM factormail_admin_sessions WHERE expires_at <= now()'
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS factormail_developer_sessions (
+      token_hash text PRIMARY KEY,
+      expires_at timestamptz NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+
+  await pool.query(
+    'DELETE FROM factormail_developer_sessions WHERE expires_at <= now()'
   );
 
   const existing = await pool.query(
@@ -310,6 +327,7 @@ function cleanExpired(): boolean {
 }
 
 const adminSessions = new Map<string, number>();
+const developerSessions = new Map<string, number>();
 
 const requests = new Map<string, { count: number; start: number }>();
 
@@ -377,6 +395,132 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
 
   try {
     if (cleanExpired()) await persist();
+
+
+    // DEVELOPER_API_V1: isolated credentials and sessions.
+    if (path.startsWith('/api/developer/')) {
+      const developerUser = process.env.DEVELOPER_USERNAME || '';
+      const developerPassword = process.env.DEVELOPER_PASSWORD || '';
+
+      if (req.method === 'POST' && path === '/api/developer/login') {
+        if (!developerUser || !developerPassword) {
+          return send(res, 503, {
+            error: 'Developer credentials are not configured on the server.'
+          });
+        }
+
+        const body = await readJson(req);
+        const username = typeof body.username === 'string' ? body.username : '';
+        const password = typeof body.password === 'string' ? body.password : '';
+
+        if (
+          !constantTimeEqual(username, developerUser) ||
+          !constantTimeEqual(password, developerPassword)
+        ) {
+          return send(res, 401, { error: 'Invalid developer credentials.' });
+        }
+
+        const token = randomBytes(32).toString('base64url');
+        const tokenHash = createHash('sha256').update(token).digest('hex');
+        const expiresAtMs = Date.now() + 8 * 60 * 60 * 1000;
+
+        if (pool) {
+          await pool.query(
+            `INSERT INTO factormail_developer_sessions (token_hash, expires_at)
+             VALUES ($1, $2)
+             ON CONFLICT (token_hash)
+             DO UPDATE SET expires_at = EXCLUDED.expires_at`,
+            [tokenHash, new Date(expiresAtMs)]
+          );
+        } else {
+          developerSessions.set(tokenHash, expiresAtMs);
+        }
+
+        return send(res, 200, {
+          token,
+          expiresAt: new Date(expiresAtMs).toISOString()
+        });
+      }
+
+      const authorization = String(req.headers.authorization || '');
+      const bearer = authorization.startsWith('Bearer ')
+        ? authorization.slice(7)
+        : '';
+
+      if (!bearer) {
+        return send(res, 401, { error: 'Developer sign-in required.' });
+      }
+
+      const tokenHash = createHash('sha256').update(bearer).digest('hex');
+      let sessionExpiry: number | undefined;
+
+      if (pool) {
+        const result = await pool.query(
+          `SELECT expires_at
+           FROM factormail_developer_sessions
+           WHERE token_hash = $1 AND expires_at > now()`,
+          [tokenHash]
+        );
+
+        if (result.rows.length > 0) {
+          sessionExpiry = new Date(result.rows[0].expires_at).getTime();
+        }
+      } else {
+        sessionExpiry = developerSessions.get(tokenHash);
+      }
+
+      if (
+        !sessionExpiry ||
+        !Number.isFinite(sessionExpiry) ||
+        sessionExpiry <= Date.now()
+      ) {
+        developerSessions.delete(tokenHash);
+        return send(res, 401, { error: 'Developer sign-in required.' });
+      }
+
+      if (req.method === 'POST' && path === '/api/developer/logout') {
+        if (pool) {
+          await pool.query(
+            'DELETE FROM factormail_developer_sessions WHERE token_hash = $1',
+            [tokenHash]
+          );
+        }
+        developerSessions.delete(tokenHash);
+        return send(res, 200, { success: true });
+      }
+
+      if (req.method === 'GET' && path === '/api/developer/status') {
+        return send(res, 200, {
+          api: 'healthy',
+          storage: STORAGE_BACKEND,
+          domain: DOMAIN,
+          mailboxTtlMinutes: TTL_MINUTES,
+          databaseConfigured: Boolean(pool),
+          inboundConfigured: Boolean(RESEND_API_KEY && RESEND_WEBHOOK_SECRET),
+          developerSessionExpiresAt: new Date(sessionExpiry).toISOString(),
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      if (req.method === 'GET' && path === '/api/developer/overview') {
+        const mailboxes = Object.values(store.mailboxes);
+        return send(res, 200, {
+          api: 'healthy',
+          storage: STORAGE_BACKEND,
+          mailboxCount: mailboxes.length,
+          messageCount: mailboxes.reduce(
+            (total, mailbox) => total + mailbox.messages.length,
+            0
+          ),
+          enabledDomains: [...ENABLED_DOMAINS],
+          databaseConfigured: Boolean(pool),
+          inboundConfigured: Boolean(RESEND_API_KEY && RESEND_WEBHOOK_SECRET),
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      return send(res, 404, { error: 'Developer route not found.' });
+    }
 
 
     // FACTORMAIL_ADMIN_API_V1
@@ -793,8 +937,18 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
         // Preserve existing mailboxes by blocking deletion while any use this domain.
         const references = await pool.query(
           `SELECT 1
-           FROM public.mailboxes
-           WHERE right(lower(address), length($1) + 1) = '@' || lower($1)
+           FROM factormail_store_snapshot AS snapshot
+           CROSS JOIN LATERAL jsonb_each(
+             CASE
+               WHEN jsonb_typeof(snapshot.payload->'mailboxes') = 'object'
+               THEN snapshot.payload->'mailboxes'
+               ELSE '{}'::jsonb
+             END
+           ) AS item
+           WHERE right(
+             lower(COALESCE(item.value->>'address', '')),
+             length($1) + 1
+           ) = '@' || lower($1)
            LIMIT 1`,
           [domainName]
         );
@@ -994,6 +1148,18 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
         });
       }
 
+      const normalizedAddress = `${local}@${selectedDomain}`.toLowerCase();
+      const duplicateAddress = Object.values(store.mailboxes).some(
+        (existingMailbox) =>
+          String(existingMailbox.address || '').trim().toLowerCase() === normalizedAddress
+      );
+
+      if (duplicateAddress) {
+        return send(res, 409, {
+          error: 'That email address already exists. Choose another username.'
+        });
+      }
+
       const now = Date.now();
       const id = randomBytes(16).toString('hex');
       const accessToken = randomBytes(32).toString('base64url');
@@ -1001,7 +1167,7 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
 
       const mailbox: Mailbox = {
         id,
-        address: `${local}@${selectedDomain}`,
+        address: normalizedAddress,
         createdAt: now,
         messages: [],
         accessTokenHash
@@ -1020,7 +1186,7 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
     }
 
     if (req.method === 'POST' && path === '/api/webhooks/resend') {
-      if (!RESEND_API_KEY || !RESEND_WEBHOOK_SECRET) {
+      if (!RESEND_API_KEY || !RESEND_WEBHOOK_SECRET || !resendClient) {
         return send(res, 503, {
           error: 'Resend webhook integration is not configured.'
         });
@@ -1267,6 +1433,10 @@ if (!process.env.VERCEL) {
 const cleanupTimer = setInterval(() => {
   for (const [hash, expiry] of adminSessions) {
     if (expiry <= Date.now()) adminSessions.delete(hash);
+  }
+
+  for (const [hash, expiry] of developerSessions) {
+    if (expiry <= Date.now()) developerSessions.delete(hash);
   }
 
   if (cleanExpired()) {

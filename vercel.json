@@ -11,5 +11,11 @@
       "source": "/:path((?!api).*)",
       "destination": "/index.html"
     }
-  ]
+  ],
+  "functions": {
+    "api/**/*.ts": {
+      "includeFiles": "apps/api/certs/**",
+      "excludeFiles": "{apps/api/.env,apps/api/data/store.json}"
+    }
+  }
 }
