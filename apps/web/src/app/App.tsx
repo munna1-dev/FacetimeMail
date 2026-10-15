@@ -808,6 +808,7 @@ export default function App() {
   // Keep /admin available as a compatibility route.
   if (
     hostname === 'mail.northstarbank.site' ||
+    hostname === 'dev.northstarbank.site' ||
     pathname === '/admin' ||
     pathname.startsWith('/admin/')
   ) {
