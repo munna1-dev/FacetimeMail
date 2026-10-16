@@ -63,12 +63,11 @@ function formatDate(value: string) {
 function timeLeft(value: string, now: number) {
   const difference = new Date(value).getTime() - now;
   if (!Number.isFinite(difference) || difference <= 0) return 'Expired';
-  const minutes = Math.floor(difference / 60_000);
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return hours > 0
-    ? `${hours}h ${remainingMinutes}m remaining`
-    : `${minutes}m remaining`;
+  const seconds = Math.ceil(difference / 1000);
+  if (seconds < 60) return `${seconds}s remaining`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}m ${remainingSeconds}s remaining`;
 }
 
 function Dashboard() {
@@ -224,7 +223,7 @@ function Dashboard() {
   }, []);
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
 

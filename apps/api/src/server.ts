@@ -48,10 +48,7 @@ const ENABLED_DOMAINS = new Set(
     .filter(Boolean)
 );
 
-const TTL_MINUTES = Math.max(
-  5,
-  Math.min(1440, Number(process.env.MAILBOX_TTL_MINUTES || 60))
-);
+const TTL_SECONDS = 10;
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_MESSAGES = 100;
 const API_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -313,7 +310,7 @@ function constantTimeEqual(actual: string, expected: string): boolean {
 }
 
 function cleanExpired(): boolean {
-  const expiry = Date.now() - TTL_MINUTES * 60_000;
+  const expiry = Date.now() - TTL_SECONDS * 1000;
   let changed = false;
 
   for (const [id, mailbox] of Object.entries(store.mailboxes)) {
@@ -494,7 +491,8 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
           api: 'healthy',
           storage: STORAGE_BACKEND,
           domain: DOMAIN,
-          mailboxTtlMinutes: TTL_MINUTES,
+          mailboxTtlMinutes: TTL_SECONDS / 60,
+          mailboxTtlSeconds: TTL_SECONDS,
           databaseConfigured: Boolean(pool),
           inboundConfigured: Boolean(RESEND_API_KEY && RESEND_WEBHOOK_SECRET),
           developerSessionExpiresAt: new Date(sessionExpiry).toISOString(),
@@ -999,7 +997,8 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
           api: 'healthy',
           storage: STORAGE_BACKEND,
           domain: DOMAIN,
-          mailboxTtlMinutes: TTL_MINUTES,
+          mailboxTtlMinutes: TTL_SECONDS / 60,
+          mailboxTtlSeconds: TTL_SECONDS,
           inboundConfigured: Boolean(RESEND_API_KEY && RESEND_WEBHOOK_SECRET),
           adminSessionExpiresAt: new Date(sessionExpiry).toISOString(),
           timestamp: new Date().toISOString()
@@ -1018,7 +1017,8 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
           mailboxesWithMessages: mailboxes.filter(m => m.messages.length > 0).length,
           mailboxCapacity: 5000,
           domain: DOMAIN,
-          mailboxTtlMinutes: TTL_MINUTES,
+          mailboxTtlMinutes: TTL_SECONDS / 60,
+          mailboxTtlSeconds: TTL_SECONDS,
           inboundConfigured: Boolean(RESEND_API_KEY && RESEND_WEBHOOK_SECRET),
           storage: STORAGE_BACKEND,
           api: 'healthy',
@@ -1033,7 +1033,7 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
             address: mailbox.address,
             createdAt: new Date(mailbox.createdAt).toISOString(),
             expiresAt: new Date(
-              mailbox.createdAt + TTL_MINUTES * 60_000
+              mailbox.createdAt + TTL_SECONDS * 1000
             ).toISOString(),
             messageCount: mailbox.messages.length
           }))
@@ -1179,7 +1179,7 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
       return send(res, 201, {
         id: mailbox.id,
         address: mailbox.address,
-        expiresAt: new Date(now + TTL_MINUTES * 60_000).toISOString(),
+        expiresAt: new Date(now + TTL_SECONDS * 1000).toISOString(),
         messages: [],
         accessToken
       });
@@ -1385,7 +1385,7 @@ const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
           id: mailbox.id,
           address: mailbox.address,
           expiresAt: new Date(
-            mailbox.createdAt + TTL_MINUTES * 60_000
+            mailbox.createdAt + TTL_SECONDS * 1000
           ).toISOString(),
           messages: mailbox.messages
         });
@@ -1462,6 +1462,7 @@ async function startServer(): Promise<void> {
   try {
     await ensureInitialized();
 
+    if (!process.env.VERCEL) {
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`FacetimeMail API listening on port ${PORT}`);
       console.log(`Mailbox domain: ${DOMAIN}`);
@@ -1469,6 +1470,7 @@ async function startServer(): Promise<void> {
       if (!pool) console.log(`Persistent data file: ${DATA_FILE}`);
       console.log(`Inbound webhook: ${WEBHOOK_SECRET ? 'configured' : 'disabled'}`);
     });
+    }
   } catch (error) {
     console.error('FacetimeMail storage initialization failed.');
     console.error(error instanceof Error ? error.message : 'Unknown startup error');
