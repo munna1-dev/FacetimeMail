@@ -750,7 +750,6 @@ import { useEffect as useAuthEffect, useState as useAuthState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import AuthScreen from './AuthScreen';
 import AdminPortal from './AdminPortal';
-import MailTmDashboard from './MailTmDashboard';
 import DeveloperPortal from './DeveloperPortal';
 import { supabase } from '../lib/supabase';
 
@@ -805,9 +804,9 @@ export default function App() {
   const hostname = window.location.hostname.toLowerCase();
   const pathname = window.location.pathname;
 
-  // The mail hostname uses the Mail.tm customer dashboard.
+  // Use the existing API-backed dashboard on the mail hostname.
   if (hostname === 'mail.northstarbank.site') {
-    return <MailTmDashboard />;
+    return <Dashboard />;
   }
 
   // Dedicated administrator portal; retain legacy /admin routes.
