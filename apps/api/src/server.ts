@@ -48,7 +48,11 @@ const ENABLED_DOMAINS = new Set(
     .filter(Boolean)
 );
 
-const TTL_SECONDS = 10;
+const TTL_MINUTES = Math.min(
+  10080,
+  Math.max(5, Number(process.env.MAILBOX_TTL_MINUTES || 1440) || 1440)
+);
+const TTL_SECONDS = TTL_MINUTES * 60;
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_MESSAGES = 100;
 const API_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
